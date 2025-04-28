@@ -1,0 +1,10 @@
+# .dockerignore
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.git/
+.gitignore
+*.db
+*.sqlite

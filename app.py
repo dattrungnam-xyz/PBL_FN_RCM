@@ -6,16 +6,20 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import csv
 import os
+from dotenv import load_dotenv
+
+# Load biến môi trường từ file .env
+load_dotenv()
 
 app = Flask(__name__)
 
 # Cấu hình MySQL
 MYSQL_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "your_password",   # <-- sửa password nếu cần
-    "database": "ocop_db",
-    "port": 3306
+    "host": os.getenv("MYSQL_HOST"),
+    "user": os.getenv("MYSQL_USER"),
+    "password": os.getenv("MYSQL_PASSWORD"),
+    "database": os.getenv("MYSQL_DATABASE"),
+    "port": int(os.getenv("MYSQL_PORT", 3306)),
 }
 
 def load_products_from_mysql():

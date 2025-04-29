@@ -2,18 +2,16 @@ from flask import Flask, request, jsonify
 import numpy as np
 import pymysql
 import pandas as pd
+import os
+import csv
+from dotenv import load_dotenv
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import csv
-import os
-from dotenv import load_dotenv
 
-# Load biến môi trường từ file .env
 load_dotenv()
-
 app = Flask(__name__)
 
-# Cấu hình MySQL
+# ========== Cấu hình MySQL ==========
 MYSQL_CONFIG = {
     "host": os.getenv("MYSQL_HOST"),
     "user": os.getenv("MYSQL_USER"),
@@ -32,25 +30,30 @@ def load_products_from_mysql():
         print("✅ Loaded products from MySQL")
         return products
     except Exception as e:
-        print(f"⚠️ Error connecting MySQL: {e}")
+        print(f"⚠️ MySQL error: {e}")
         return None
-    
+
 def parse_price(price_str):
+    # Nếu giá là chuỗi trống, trả về 0
+    if not price_str:
+        return 0
     # Xóa dấu chấm và chữ 'đ'
     clean_price = price_str.replace('.', '').replace('đ', '').strip()
     try:
         return int(clean_price)
     except ValueError:
+        # Nếu không chuyển đổi được, trả về 0
         return 0
-    
+
+
 def load_products_from_csv(file_path):
     products = []
     try:
-        with open(file_path, mode='r', encoding='utf-8') as csvfile:
-            reader = csv.DictReader(csvfile)
+        with open(file_path, mode='r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
             for idx, row in enumerate(reader):
                 products.append({
-                    "id": idx + 1,  # tự sinh id
+                    "id": idx + 1,
                     "title": row["product_name"],
                     "category": row["category"],
                     "origin": row["location"],
@@ -61,110 +64,130 @@ def load_products_from_csv(file_path):
         print("✅ Loaded products from CSV")
         return products
     except Exception as e:
-        print(f"⚠️ Error loading CSV: {e}")
+        print(f"⚠️ CSV error: {e}")
         return []
 
-# ========= Load products ==========
-
+# ========== Load Products ==========
 products = load_products_from_mysql()
+if not products and os.path.exists('product.csv'):
+    products = load_products_from_csv('product.csv')
 
-# Nếu MySQL lỗi thì fallback qua CSV
 if not products:
-    if os.path.exists('product.csv'):
-        products = load_products_from_csv('product.csv')
-    else:
-        print("❌ Không tìm thấy data MySQL hoặc CSV!")
-        products = []
+    raise Exception("❌ No product data found")
 
-# ========= Chuẩn bị TF-IDF ==========
-
+# ========== Prepare Data ==========
 product_texts = []
 product_id_to_index = {}
 
 for idx, p in enumerate(products):
     full_text = f"{p['title']} {p['category']} {p['origin']} {p['description']}"
     product_texts.append(full_text)
-    product_id_to_index[p["id"]] = idx
+    product_id_to_index[p['id']] = idx
 
-vectorizer = TfidfVectorizer()
-product_vectors = vectorizer.fit_transform(product_texts)
+# TF-IDF Vectorizer
+tfidf_vectorizer = TfidfVectorizer()
+tfidf_matrix = tfidf_vectorizer.fit_transform(product_texts)
 
-# ========= API Recommend ==========
-
-@app.route('/recommend', methods=['POST'])
+# ========== Recommend API ==========
+@app.route("/recommend", methods=["POST"])
 def recommend():
     data = request.json
-    
     search_history = data.get("search_history", [])
     viewed_product_ids = data.get("viewed_product_ids", [])
+    current_search = data.get("current_search", "")
+    origin_filter = data.get("origin")
+    min_price = data.get("min_price", 0)
+    max_price = data.get("max_price", float("inf"))
     top_k = data.get("top_k", 5)
 
-    if not search_history and not viewed_product_ids:
-        return jsonify({"error": "Cần ít nhất search_history hoặc viewed_product_ids"}), 400
+    if not search_history and not viewed_product_ids and not current_search:
+        return jsonify({"error": "Missing search input or viewed product ids"}), 400
 
-    # Vector từ search history
+    # ======== User Vector =========
+    user_queries = []
+
     if search_history:
-        search_vectors = vectorizer.transform(search_history)
-        mean_search_vector = np.mean(search_vectors.toarray(), axis=0)
-    else:
-        mean_search_vector = np.zeros(product_vectors.shape[1])
+        user_queries.extend(search_history)
 
-    # Vector từ sản phẩm đã xem
-    view_vectors = []
-    for pid in viewed_product_ids:
-        idx = product_id_to_index.get(pid)
-        if idx is not None:
-            view_vectors.append(product_vectors[idx])
+    if current_search:
+        user_queries.append(current_search)
 
-    if view_vectors:
-        view_vectors = np.vstack([v.toarray() for v in view_vectors])
-        mean_view_vector = np.mean(view_vectors, axis=0)
-    else:
-        mean_view_vector = np.zeros(product_vectors.shape[1])
+    if viewed_product_ids:
+        for pid in viewed_product_ids:
+            idx = product_id_to_index.get(pid)
+            if idx is not None:
+                user_queries.append(product_texts[idx])
 
-    # Trọng số
-    search_weight = 0.7
-    view_weight = 0.3
+    if not user_queries:
+        return jsonify({"error": "No valid input for similarity calculation"}), 400
 
-    user_vector = (
-        search_weight * mean_search_vector +
-        view_weight * mean_view_vector
-    ).reshape(1, -1)
+    # Transform user queries to TF-IDF vectors
+    user_vectors = tfidf_vectorizer.transform(user_queries)
+    
+    # Calculate average similarity
+    similarities = np.zeros(len(products))
+    for user_vector in user_vectors:
+        similarities += cosine_similarity(user_vector, tfidf_matrix).flatten()
+    similarities /= len(user_queries)
 
-    similarities = cosine_similarity(user_vector, product_vectors).flatten()
-    top_indices = similarities.argsort()[-top_k:][::-1]
+    # ======== Filtering =========
+    results = []
+    for idx, p in enumerate(products):
+        if not (min_price <= p["price"] <= max_price):
+            continue
+        if origin_filter and origin_filter.lower() not in p["origin"].lower():
+            continue
+        results.append((similarities[idx], p))
 
-    recommended_products = []
-    for idx in top_indices:
-        p = products[idx]
-        recommended_products.append({
-            "id": p["id"],
-            "title": p["title"],
-            "category": p["category"],
-            "origin": p["origin"],
-            "description": p["description"],
-            "price": f"{p['price']:,}đ",  # format lại giá đẹp 180,000đ
-            "ocop_star": p["ocop_star"],
-            "score": round(float(similarities[idx]), 4)
-        })
+    # ======== Sort and return =========
+    results = sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
 
     return jsonify({
-        "recommended_products": recommended_products
+        "recommended_products": [
+            {
+                "id": p["id"],
+                "title": p["title"],
+                "category": p["category"],
+                "origin": p["origin"],
+                "description": p["description"],
+                "price": f"{p['price']:,}đ",
+                "ocop_star": p["ocop_star"],
+                "score": round(float(score), 4)
+            } for score, p in results
+        ]
     })
 
-# ========= RUN APP ==========
+# ========== Similar Products API ==========
+@app.route("/similar-products/<int:product_id>", methods=["GET"])
+def similar_products(product_id):
+    idx = product_id_to_index.get(product_id)
+    if idx is None:
+        return jsonify({"error": "Product not found"}), 404
 
-if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # Get the vector for the selected product
+    product_vector = tfidf_matrix[idx]
 
-#{
-#  "search_history": [
-#    "trà xanh thái nguyên",
-#    "mật ong nguyên chất tự nhiên"
-#  ],
-#  "viewed_product_ids": [1, 2, 5],
-#  "top_k": 5
-#}
+    # Calculate similarity with all products
+    similarities = cosine_similarity(product_vector, tfidf_matrix).flatten()
 
+    # Get the top 5 similar products
+    top_indices = similarities.argsort()[-6:-1][::-1]  # Exclude the product itself
+    similar_products = [
+        {
+            "id": products[i]["id"],
+            "title": products[i]["title"],
+            "category": products[i]["category"],
+            "origin": products[i]["origin"],
+            "description": products[i]["description"],
+            "price": f"{products[i]['price']:,}đ",
+            "ocop_star": products[i]["ocop_star"],
+            "score": round(float(similarities[i]), 4)
+        } for i in top_indices
+    ]
 
- 
+    return jsonify({
+        "similar_products": similar_products
+    })
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)

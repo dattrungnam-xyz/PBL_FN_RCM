@@ -137,13 +137,13 @@ def recommend():
     data = request.json
     search_history = data.get("search_history", [])
     viewed_product_ids = data.get("viewed_product_ids", [])
-    current_search = data.get("current_search", "")
-    province_filter = data.get("province")
+    provinces_filter = data.get("provinces", [])
     min_price = data.get("min_price", 0)
     max_price = data.get("max_price", float("inf"))
-    top_k = data.get("top_k", 5)
+    page = int(data.get("page", 1))
+    page_size = int(data.get("page_size", 15))
 
-    if not search_history and not viewed_product_ids and not current_search:
+    if not search_history and not viewed_product_ids:
         return jsonify({"error": "Missing search input or viewed product ids"}), 400
 
     with product_lock:
@@ -159,9 +159,6 @@ def recommend():
 
     if search_history:
         user_queries.extend(search_history)
-
-    if current_search:
-        user_queries.append(current_search)
 
     for pid in viewed_product_ids:
         idx = product_id_map_copy.get(pid)
@@ -184,13 +181,21 @@ def recommend():
     for idx, p in enumerate(products_copy):
         if not (min_price <= p["price"] <= max_price):
             continue
-        if province_filter and province_filter.lower() not in p["province"].lower():
+        if not any(province.lower() in p["province"].lower() for province in provinces_filter):
             continue
         results.append((similarities[idx], p))
 
-    results = sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
+    results = sorted(results, key=lambda x: x[0], reverse=True)
+    total_results = len(results)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated_results = results[start:end]
+
 
     return jsonify({
+        "total": total_results,
+        "page": page,
+        "page_size": page_size,
         "recommended_products": [
             {
                 "id": p["id"],
@@ -201,9 +206,10 @@ def recommend():
                 "price": f"{p['price']:,}đ",
                 "star": p["star"],
                 "score": round(float(score), 4)
-            } for score, p in results
+            } for score, p in paginated_results
         ]
     })
+
 
 @app.route("/similar-products/<int:product_id>", methods=["GET"])
 def similar_products(product_id):

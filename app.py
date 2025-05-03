@@ -217,7 +217,7 @@ def recommend():
         ]
     })
 
-@app.route("/similar-products/<int:product_id>", methods=["GET"])
+@app.route("/similar-products/<product_id>", methods=["GET"])
 def similar_products(product_id):
     with data_lock:
         data_snapshot = shared_data
@@ -231,7 +231,7 @@ def similar_products(product_id):
 
     product_vector = data_snapshot.tfidf_matrix[idx]
     similarities = cosine_similarity(product_vector, data_snapshot.tfidf_matrix).flatten()
-    top_indices = similarities.argsort()[-6:-1][::-1]
+    top_indices = similarities.argsort()[-11:-1][::-1]
 
     result = []
     for i in top_indices:

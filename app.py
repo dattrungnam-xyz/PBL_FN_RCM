@@ -22,7 +22,7 @@ MYSQL_CONFIG = {
     "database": os.getenv("MYSQL_DATABASE"),
     "port": int(os.getenv("MYSQL_PORT", 3306)),
 }
-print(MYSQL_CONFIG)
+
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))

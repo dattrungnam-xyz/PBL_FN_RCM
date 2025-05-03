@@ -1,0 +1,48 @@
+name: Build, Push Docker Image & Deploy on VPN via SSH
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build Docker image
+        run: |
+          docker build -t dattrungnam510/rcm_ocop_mart:latest .
+
+      - name: Push Docker image to Docker Hub
+        run: |
+          docker push dattrungnam510/rcm_ocop_mart:latest
+
+      - name: SSH into VPN server and deploy Docker image
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ secrets.VPN_SERVER_IP }}
+          username: ${{ secrets.VPN_USERNAME }}
+          password: ${{ secrets.VPN_PASSWORD }}
+          port: 22
+          script: |
+            echo "SSH into VPN server"
+
+            echo "Stopping and removing old containers..."
+            docker ps -a -q --filter "ancestor=dattrungnam510/rcm_ocop_mart:latest" | xargs -r docker stop
+            docker ps -a -q --filter "ancestor=dattrungnam510/rcm_ocop_mart:latest" | xargs -r docker rm -f
+
+            echo "Removing old images..."
+            docker images -q dattrungnam510/rcm_ocop_mart:latest | xargs -r docker rmi -f
+
+            echo "Starting the container with the new image..."
+            docker compose -f /home/ocop/docker-compose-rcm.yml up -d

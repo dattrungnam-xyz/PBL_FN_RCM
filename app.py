@@ -9,6 +9,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from threading import Thread, Lock
 from collections import namedtuple
 import redis
+import re
 
 load_dotenv()
 app = Flask(__name__)
@@ -35,6 +36,13 @@ data_lock = Lock()
 tfidf_vectorizer = TfidfVectorizer()
 
 # ========== Load Product Functions ==========
+def preprocess_text(text):
+
+    text = text.lower()
+ 
+    text = re.sub(r"[^\w\s]", " ", text)
+
+    return text
 
 def load_products_from_mysql():
     try:
@@ -70,8 +78,8 @@ def rebuild_tfidf(new_products):
 
     for idx, p in enumerate(new_products):
         full_text = f"{p['name']} {p['category']} {p['province']} {p['description']}"
-        product_texts.append(full_text)
-        product_id_to_index[p['id']] = idx
+        processed_text = preprocess_text(full_text)
+        product_texts.append(processed_text)
 
     tfidf_matrix = tfidf_vectorizer.fit_transform(product_texts)
 

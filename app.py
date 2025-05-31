@@ -11,6 +11,7 @@ from collections import namedtuple
 import redis
 import re
 
+# Load .env
 load_dotenv()
 app = Flask(__name__)
 
@@ -24,7 +25,6 @@ MYSQL_CONFIG = {
     "port": int(os.getenv("MYSQL_PORT", 3306)),
 }
 
-
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
@@ -35,13 +35,11 @@ shared_data = None
 data_lock = Lock()
 tfidf_vectorizer = TfidfVectorizer()
 
-# ========== Load Product Functions ==========
+# ========== Helper functions ==========
+
 def preprocess_text(text):
-
     text = text.lower()
- 
     text = re.sub(r"[^\w\s]", " ", text)
-
     return text
 
 def load_products_from_mysql():
@@ -70,8 +68,6 @@ def load_products_from_mysql():
         print(f"⚠️ MySQL error: {e}")
         return None
 
-# ========== Rebuild TF-IDF ==========
-
 def rebuild_tfidf(new_products):
     product_texts = []
     product_id_to_index = {}
@@ -80,6 +76,7 @@ def rebuild_tfidf(new_products):
         full_text = f"{p['name']} {p['category']} {p['province']} {p['description']}"
         processed_text = preprocess_text(full_text)
         product_texts.append(processed_text)
+        product_id_to_index[p["id"]] = idx  # ✅ FIXED: Gán ID → index
 
     tfidf_matrix = tfidf_vectorizer.fit_transform(product_texts)
 
@@ -96,7 +93,7 @@ def rebuild_tfidf(new_products):
 
     print("✅ TF-IDF rebuilt & updated")
 
-# ========== Redis CRUD Handling ==========
+# ========== Redis Event Handling ==========
 
 def cache_product(product):
     with data_lock:
@@ -123,7 +120,7 @@ def listen_to_redis():
     pubsub = r.pubsub()
     pubsub.subscribe("product-events")
 
-    print("� Listening to Redis on channel 'product-events'...")
+    print("📡 Listening to Redis channel 'product-events'...")
     for message in pubsub.listen():
         if message["type"] != "message":
             continue
@@ -136,9 +133,8 @@ def listen_to_redis():
                 cache_product(payload)
             elif event == "delete":
                 delete_product(data["id"])
-
         except Exception as e:
-            print(f"❌ Error handling Redis event: {e}")
+            print(f"❌ Redis event error: {e}")
 
 # ========== Initial Load ==========
 
@@ -232,6 +228,15 @@ def similar_products(product_id):
 
     if not data_snapshot:
         return jsonify({"error": "Product data is not ready"}), 503
+
+    # Ensure product_id matches type in map
+    try:
+        if isinstance(next(iter(data_snapshot.product_id_to_index)), int):
+            product_id = int(product_id)
+        else:
+            product_id = str(product_id)
+    except Exception as e:
+        return jsonify({"error": "Invalid product_id"}), 400
 
     idx = data_snapshot.product_id_to_index.get(product_id)
     if idx is None or idx >= len(data_snapshot.products):

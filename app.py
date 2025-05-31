@@ -30,17 +30,21 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
 # ========== Globals ==========
 
-ProductData = namedtuple("ProductData", ["products", "product_texts", "product_id_to_index", "tfidf_matrix"])
+ProductData = namedtuple(
+    "ProductData", ["products", "product_texts", "product_id_to_index", "tfidf_matrix"]
+)
 shared_data = None
 data_lock = Lock()
 tfidf_vectorizer = TfidfVectorizer()
 
 # ========== Helper functions ==========
 
+
 def preprocess_text(text):
     text = text.lower()
     text = re.sub(r"[^\w\s]", " ", text)
     return text
+
 
 def load_products_from_mysql():
     try:
@@ -68,6 +72,7 @@ def load_products_from_mysql():
         print(f"⚠️ MySQL error: {e}")
         return None
 
+
 def rebuild_tfidf(new_products):
     product_texts = []
     product_id_to_index = {}
@@ -84,7 +89,7 @@ def rebuild_tfidf(new_products):
         products=new_products,
         product_texts=product_texts,
         product_id_to_index=product_id_to_index,
-        tfidf_matrix=tfidf_matrix
+        tfidf_matrix=tfidf_matrix,
     )
 
     with data_lock:
@@ -93,7 +98,9 @@ def rebuild_tfidf(new_products):
 
     print("✅ TF-IDF rebuilt & updated")
 
+
 # ========== Redis Event Handling ==========
+
 
 def cache_product(product):
     with data_lock:
@@ -108,12 +115,14 @@ def cache_product(product):
 
     rebuild_tfidf(current_products)
 
+
 def delete_product(product_id):
     with data_lock:
         current_products = list(shared_data.products) if shared_data else []
 
     new_products = [p for p in current_products if p["id"] != product_id]
     rebuild_tfidf(new_products)
+
 
 def listen_to_redis():
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
@@ -136,6 +145,7 @@ def listen_to_redis():
         except Exception as e:
             print(f"❌ Redis event error: {e}")
 
+
 # ========== Initial Load ==========
 
 initial_products = load_products_from_mysql()
@@ -145,6 +155,7 @@ if not initial_products:
 rebuild_tfidf(initial_products)
 
 # ========== Flask APIs ==========
+
 
 @app.route("/recommend", methods=["POST"])
 def recommend():
@@ -163,21 +174,29 @@ def recommend():
         data_snapshot = shared_data
 
     if not data_snapshot:
-        return jsonify({"error": "Product data is being updated. Please retry shortly."}), 503
+        return (
+            jsonify({"error": "Product data is being updated. Please retry shortly."}),
+            503,
+        )
 
     similarities = np.zeros(len(data_snapshot.products))
     total_weight = 0
 
     for query in search_history:
         user_vector = tfidf_vectorizer.transform([query])
-        similarities += 1.0 * cosine_similarity(user_vector, data_snapshot.tfidf_matrix).flatten()
+        similarities += (
+            1.0 * cosine_similarity(user_vector, data_snapshot.tfidf_matrix).flatten()
+        )
         total_weight += 1.0
 
     for pid in viewed_product_ids:
         idx = data_snapshot.product_id_to_index.get(pid)
         if idx is not None and idx < len(data_snapshot.product_texts):
             user_vector = tfidf_vectorizer.transform([data_snapshot.product_texts[idx]])
-            similarities += 0.5 * cosine_similarity(user_vector, data_snapshot.tfidf_matrix).flatten()
+            similarities += (
+                0.5
+                * cosine_similarity(user_vector, data_snapshot.tfidf_matrix).flatten()
+            )
             total_weight += 0.5
 
     if total_weight > 0:
@@ -187,13 +206,25 @@ def recommend():
 
     results = []
     for idx, p in enumerate(data_snapshot.products):
-        if not (min_price <= p["price"] <= max_price):
+        if max_price == float("inf"):
+            if not (int(min_price) <= int(p["price"])):
+                continue
+        else:
+            if not (int(min_price) <= int(p["price"]) <= int(max_price)):
+                continue
+        if provinces_filter and not any(
+            province.lower() in p["province"].lower() for province in provinces_filter
+        ):
             continue
-        if provinces_filter and not any(province.lower() in p["province"].lower() for province in provinces_filter):
+        if categories and not any(
+            category.lower() in p["category"].lower() for category in categories
+        ):
             continue
-        if categories and not any(category.lower() in p["category"].lower() for category in categories):
-            continue
-        if search and search not in p["name"].lower() and search not in p.get("description", "").lower():
+        if (
+            search
+            and search not in p["name"].lower()
+            and search not in p.get("description", "").lower()
+        ):
             continue
         results.append((similarities[idx], p))
 
@@ -203,23 +234,27 @@ def recommend():
     end = start + page_size
     paginated_results = results[start:end]
 
-    return jsonify({
-        "total": total_results,
-        "page": page,
-        "page_size": page_size,
-        "recommended_products": [
-            {
-                "id": p["id"],
-                "name": p["name"],
-                "category": p["category"],
-                "province": p["province"],
-                "description": p["description"],
-                "price": f"{p['price']:,}đ",
-                "star": p["star"],
-                "score": round(float(score), 4)
-            } for score, p in paginated_results
-        ]
-    })
+    return jsonify(
+        {
+            "total": total_results,
+            "page": page,
+            "page_size": page_size,
+            "recommended_products": [
+                {
+                    "id": p["id"],
+                    "name": p["name"],
+                    "category": p["category"],
+                    "province": p["province"],
+                    "description": p["description"],
+                    "price": f"{p['price']:,}đ",
+                    "star": p["star"],
+                    "score": round(float(score), 4),
+                }
+                for score, p in paginated_results
+            ],
+        }
+    )
+
 
 @app.route("/similar-products/<product_id>", methods=["GET"])
 def similar_products(product_id):
@@ -243,24 +278,29 @@ def similar_products(product_id):
         return jsonify({"error": "Product not found"}), 404
 
     product_vector = data_snapshot.tfidf_matrix[idx]
-    similarities = cosine_similarity(product_vector, data_snapshot.tfidf_matrix).flatten()
+    similarities = cosine_similarity(
+        product_vector, data_snapshot.tfidf_matrix
+    ).flatten()
     top_indices = similarities.argsort()[-11:-1][::-1]
 
     result = []
     for i in top_indices:
         product = data_snapshot.products[i]
-        result.append({
-            "id": product["id"],
-            "name": product["name"],
-            "category": product["category"],
-            "province": product["province"],
-            "description": product["description"],
-            "price": f"{product['price']:,}đ",
-            "star": product["star"],
-            "score": round(float(similarities[i]), 4)
-        })
+        result.append(
+            {
+                "id": product["id"],
+                "name": product["name"],
+                "category": product["category"],
+                "province": product["province"],
+                "description": product["description"],
+                "price": f"{product['price']:,}đ",
+                "star": product["star"],
+                "score": round(float(similarities[i]), 4),
+            }
+        )
 
     return jsonify({"similar_products": result})
+
 
 # ========== Main ==========
 

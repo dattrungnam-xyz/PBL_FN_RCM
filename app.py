@@ -226,6 +226,8 @@ def recommend():
             and search not in p.get("description", "").lower()
         ):
             continue
+        if p["status"] == "STOPPED":
+            continue
         results.append((similarities[idx], p))
 
     results = sorted(results, key=lambda x: x[0], reverse=True)
@@ -281,11 +283,15 @@ def similar_products(product_id):
     similarities = cosine_similarity(
         product_vector, data_snapshot.tfidf_matrix
     ).flatten()
-    top_indices = similarities.argsort()[-11:-1][::-1]
+    top_indices = similarities.argsort()[-50:-1][::-1]
 
     result = []
     for i in top_indices:
         product = data_snapshot.products[i]
+        if product["status"] == "STOPPED":
+            continue
+        if len(result) >= 10:
+            break
         result.append(
             {
                 "id": product["id"],

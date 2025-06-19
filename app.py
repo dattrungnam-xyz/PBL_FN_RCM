@@ -66,10 +66,10 @@ def load_products_from_mysql():
             cursor.execute(query)
             results = cursor.fetchall()
         connection.close()
-        print("✅ Loaded products from MySQL")
+        print("Loaded products from MySQL")
         return results
     except Exception as e:
-        print(f"⚠️ MySQL error: {e}")
+        print(f"MySQL error: {e}")
         return None
 
 
@@ -81,7 +81,7 @@ def rebuild_tfidf(new_products):
         full_text = f"{p['name']} {p['category']} {p['province']} {p['description']}"
         processed_text = preprocess_text(full_text)
         product_texts.append(processed_text)
-        product_id_to_index[p["id"]] = idx  # ✅ FIXED: Gán ID → index
+        product_id_to_index[p["id"]] = idx
 
     tfidf_matrix = tfidf_vectorizer.fit_transform(product_texts)
 
@@ -96,7 +96,7 @@ def rebuild_tfidf(new_products):
         global shared_data
         shared_data = new_data
 
-    print("✅ TF-IDF rebuilt & updated")
+    print("TF-IDF rebuilt & updated")
 
 
 # ========== Redis Event Handling ==========
@@ -129,7 +129,7 @@ def listen_to_redis():
     pubsub = r.pubsub()
     pubsub.subscribe("product-events")
 
-    print("📡 Listening to Redis channel 'product-events'...")
+    print("Listening to Redis channel 'product-events'...")
     for message in pubsub.listen():
         if message["type"] != "message":
             continue
@@ -143,14 +143,14 @@ def listen_to_redis():
             elif event == "delete":
                 delete_product(data["id"])
         except Exception as e:
-            print(f"❌ Redis event error: {e}")
+            print(f"Redis event error: {e}")
 
 
 # ========== Initial Load ==========
 
 initial_products = load_products_from_mysql()
 if not initial_products:
-    raise Exception("❌ No product data found")
+    raise Exception("No product data found")
 
 rebuild_tfidf(initial_products)
 
@@ -205,6 +205,7 @@ def recommend():
         similarities = np.ones(len(data_snapshot.products))
 
     results = []
+    print(provinces_filter)
     for idx, p in enumerate(data_snapshot.products):
         if max_price == float("inf"):
             if not (int(min_price) <= int(p["price"])):
@@ -212,9 +213,7 @@ def recommend():
         else:
             if not (int(min_price) <= int(p["price"]) <= int(max_price)):
                 continue
-        if provinces_filter and not any(
-            province.lower() in p["province"].lower() for province in provinces_filter
-        ):
+        if provinces_filter and p["province"] not in provinces_filter:
             continue
         if categories and not any(
             category.lower() in p["category"].lower() for category in categories

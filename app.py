@@ -164,6 +164,7 @@ def recommend():
     viewed_product_ids = data.get("viewed_product_ids", [])
     categories = data.get("categories")
     provinces_filter = data.get("provinces", [])
+    star_filter = data.get("ocop_stars", [])
     min_price = data.get("min_price", 0)
     max_price = data.get("max_price", float("inf"))
     page = int(data.get("page", 1))
@@ -205,7 +206,10 @@ def recommend():
         similarities = np.ones(len(data_snapshot.products))
 
     results = []
+    print("provinces_filter")
     print(provinces_filter)
+    print("star_filter")
+    print(star_filter)
     for idx, p in enumerate(data_snapshot.products):
         if max_price == float("inf"):
             if not (int(min_price) <= int(p["price"])):
@@ -214,6 +218,8 @@ def recommend():
             if not (int(min_price) <= int(p["price"]) <= int(max_price)):
                 continue
         if provinces_filter and p["province"] not in provinces_filter:
+            continue
+        if star_filter and int(p["star"]) not in [int(s) for s in star_filter]:
             continue
         if categories and not any(
             category.lower() in p["category"].lower() for category in categories
